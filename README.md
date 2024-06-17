@@ -1,4 +1,6 @@
-# erlfmt
+# erlfmt (fork)
+
+Форк форматера erlfmt, в котором пробелы заменены на табы.
 
 erlfmt is an opinionated Erlang code formatter. By automating the process of
 formatting the code, it frees your team up to focus on what the code does,
