@@ -1,6 +1,6 @@
 -module(ignore_format_many).
 
-%%% erlfmt-ignore-begin
+%%% erlfmt:ignore-begin
 -define(DELTA_MATRIX, [
     [0,   0,   0,   0,   0,   0],
     [0, -16,   0,   0,   0,   0],
@@ -11,7 +11,7 @@
 ]).
 -define(ALSO_IGNORED, [  1,  2,  3]).
 
-%%% erlfmt-ignore-end
+%%% erlfmt:ignore-end
 -define(DELTA_MATRIX_FORMATTED, [
     [0,   0,   0,   0,   0,   0],
     [0, -16,   0,   0,   0,   0],
@@ -22,7 +22,7 @@
 ]).
 
 %% some comment
-%%erlfmt-ignore %
+%%erlfmt:ignore %
 %% another comment
 gen_part_decode_funcs({constructed,bif},TypeName,
               {_Name,parts,Tag,_Type}) ->
@@ -34,6 +34,18 @@ gen_part_decode_funcs({constructed,bif},TypeName,
           "      [Res] = 'dec_",TypeName,"'([Data],",{asis,Tag},"),",nl,
           "      Res",nl,
           "  end"]).
+
+% erlfmt:ignore-begin I like the comments next to the statement
+f() -> ok. % this is ok
+g() -> ok. % this is also ok
+% erlfmt:ignore-end I'm done with this style
+
+% erlfmt:ignore-begin Here we go again...
+a1() -> ok. % again
+a2() -> ok. % ditto
+% erlfmt:ignore-end Now I'm really done
+
+h() -> ok. % blah
 
 %% TODO write emit
 emit(S) ->   ok.

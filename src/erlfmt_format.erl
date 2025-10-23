@@ -78,7 +78,11 @@ to_algebra({attribute, Meta, {atom, _, import}, [Name, {list, Anno, Imports}]}) 
     Doc = call(Meta, [Name, GroupedImports], <<"-import(">>, <<")">>),
     combine_comments_with_dot(Meta, Doc);
 to_algebra({attribute, Meta, {atom, _, RawName} = Name, [Value]}) when
-    RawName =:= type; RawName =:= opaque; RawName =:= spec; RawName =:= callback
+    RawName =:= type;
+    RawName =:= opaque;
+    RawName =:= spec;
+    RawName =:= callback;
+    RawName =:= nominal
 ->
     ValueD = next_break_fits(expr_to_algebra(Value), enabled),
     Doc = concat([<<"-">>, expr_to_algebra(Name), <<" ">>, ValueD]),
@@ -93,6 +97,12 @@ to_algebra({attribute, Meta, {atom, _, record}, [Name, {tuple, TMeta, Values} = 
             Doc = surround(HeadD, <<"">>, expr_to_algebra(Tuple), <<"">>, <<")">>),
             combine_comments_with_dot(Meta, Doc)
     end;
+to_algebra({attribute, Meta, {atom, _, RawName} = Name, [Value]}) when
+    RawName =:= doc; RawName =:= moduledoc
+->
+    ValueD = expr_to_algebra(Value),
+    Doc = concat([<<"-">>, expr_to_algebra(Name), <<" ">>, ValueD]),
+    combine_comments_with_dot(Meta, Doc);
 to_algebra({attribute, Meta, Name, Values}) ->
     Doc = concat(<<"-">>, attribute_to_algebra(Name), call(Meta, Values, <<"(">>, <<")">>)),
     combine_comments_with_dot(Meta, Doc);
@@ -180,10 +190,8 @@ do_expr_to_algebra({mc, _Meta, Expr, LcExprs}) ->
     comprehension_to_algebra(Expr, LcExprs, <<"#{">>, <<"}">>);
 do_expr_to_algebra({bc, _Meta, Expr, LcExprs}) ->
     comprehension_to_algebra(Expr, LcExprs, <<"<<">>, <<">>">>);
-do_expr_to_algebra({generate, _Meta, Left, Right}) ->
-    field_to_algebra(<<"<-">>, Left, Right);
-do_expr_to_algebra({b_generate, _Meta, Left, Right}) ->
-    field_to_algebra(<<"<=">>, Left, Right);
+do_expr_to_algebra({generate, _Meta, Op, Left, Right}) ->
+    field_to_algebra(atom_to_binary(Op), Left, Right);
 do_expr_to_algebra({call, Meta, Name, Args}) ->
     concat(expr_to_algebra(Name), call(Meta, Args, <<"(">>, <<")">>));
 do_expr_to_algebra({macro_call, _Meta, Name, none}) ->
@@ -195,20 +203,20 @@ do_expr_to_algebra({macro_string, _Meta, Name}) ->
 do_expr_to_algebra({remote, _Meta, Left, Right}) ->
     concat(expr_to_algebra(Left), <<":">>, expr_to_algebra(Right));
 do_expr_to_algebra({block, Meta, Exprs}) ->
-    surround_block(<<"begin">>, block_to_algebra(Meta, Exprs), <<"end">>);
+    surround_block(<<"begin">>, Exprs, fun(X) -> block_to_algebra(Meta, X) end, <<"end">>);
 do_expr_to_algebra({'fun', _Meta, Expr}) ->
     fun_to_algebra(Expr);
 do_expr_to_algebra({args, Meta, Values}) ->
     container(Meta, Values, <<"(">>, <<")">>);
 do_expr_to_algebra({'case', _Meta, Expr, Clauses}) ->
     Prefix = surround(<<"case">>, <<" ">>, expr_to_algebra(Expr), <<" ">>, <<"of">>),
-    surround_block(Prefix, clauses_to_algebra(Clauses), <<"end">>);
+    surround_block(Prefix, Clauses, fun clauses_to_algebra/1, <<"end">>);
 do_expr_to_algebra({'maybe', _Meta, MaybeExpressions}) ->
-    surround_block(<<"maybe">>, maybe_expressions_to_algebra(MaybeExpressions), <<"end">>);
+    surround_block(<<"maybe">>, MaybeExpressions, fun maybe_expressions_to_algebra/1, <<"end">>);
 do_expr_to_algebra({'maybe', _Meta, MaybeExpressions, Else}) ->
     ElseD = expr_to_algebra(Else),
     surround_block(
-        <<"maybe">>, maybe_expressions_to_algebra(MaybeExpressions), line(ElseD, <<"end">>)
+        <<"maybe">>, MaybeExpressions, fun maybe_expressions_to_algebra/1, line(ElseD, <<"end">>)
     );
 do_expr_to_algebra({else_clause, _Meta, Clauses}) ->
     concat(
@@ -216,13 +224,10 @@ do_expr_to_algebra({else_clause, _Meta, Clauses}) ->
         group(concat(<<"else">>, nest(concat(line(), clauses_to_algebra(Clauses)), ?INDENT)))
     );
 do_expr_to_algebra({'receive', _Meta, Clauses}) ->
-    surround_block(<<"receive">>, expr_to_algebra(Clauses), <<"end">>);
-do_expr_to_algebra({'receive', _Meta, empty, After}) ->
-    AfterD = expr_to_algebra(After),
-    concat(force_breaks(), (line(<<"receive">>, line(AfterD, <<"end">>))));
+    surround_block(<<"receive">>, Clauses, fun expr_to_algebra/1, <<"end">>);
 do_expr_to_algebra({'receive', _Meta, Clauses, After}) ->
     AfterD = expr_to_algebra(After),
-    surround_block(<<"receive">>, expr_to_algebra(Clauses), line(AfterD, <<"end">>));
+    surround_block(<<"receive">>, Clauses, fun expr_to_algebra/1, line(AfterD, <<"end">>));
 do_expr_to_algebra({after_clause, _Meta, Expr, Body}) ->
     receive_after_to_algebra(Expr, Body);
 do_expr_to_algebra({'try', _Meta, Exprs, OfClauses, CatchClauses, After}) ->
@@ -231,7 +236,7 @@ do_expr_to_algebra({'catch', _Meta, Exprs}) ->
     ExprsD = lists:map(fun expr_to_algebra/1, Exprs),
     fold_doc(fun(Doc, Acc) -> concat(Doc, <<":">>, Acc) end, ExprsD);
 do_expr_to_algebra({'if', _Meta, Clauses}) ->
-    surround_block(<<"if">>, clauses_to_algebra(Clauses), <<"end">>);
+    surround_block(<<"if">>, Clauses, fun clauses_to_algebra/1, <<"end">>);
 do_expr_to_algebra({spec, _Meta, Name, [SingleClause]}) ->
     single_clause_spec_to_algebra(Name, SingleClause);
 do_expr_to_algebra({spec, _Meta, Name, Clauses}) ->
@@ -254,6 +259,17 @@ do_expr_to_algebra({clauses, _Meta, Clauses}) ->
     clauses_to_algebra(Clauses);
 do_expr_to_algebra({body, _Meta, Exprs}) ->
     block_to_algebra(Exprs);
+do_expr_to_algebra({sigil, _Meta, Prefix, Content, Suffix}) ->
+    PrefixDoc = concat(<<"~">>, do_expr_to_algebra(Prefix)),
+    concat(concat(PrefixDoc, do_expr_to_algebra(Content)), do_expr_to_algebra(Suffix));
+do_expr_to_algebra({sigil_prefix, _Meta, ''}) ->
+    <<"">>;
+do_expr_to_algebra({sigil_prefix, _Meta, SigilName}) ->
+    atom_to_binary(SigilName, utf8);
+do_expr_to_algebra({sigil_suffix, _Meta, []}) ->
+    <<>>;
+do_expr_to_algebra({sigil_suffix, _Meta, Modifiers}) ->
+    list_to_binary(Modifiers);
 do_expr_to_algebra(Other) ->
     error(unsupported, [Other]).
 
@@ -266,7 +282,10 @@ surround(Left, LeftSpace, Doc, RightSpace, Right) ->
         )
     ).
 
-surround_block(Left, Doc, Right) ->
+surround_block(Left, Empty, _Mapper, Right) when Empty =:= []; Empty =:= empty ->
+    line(Left, Right);
+surround_block(Left, Clauses, Mapper, Right) ->
+    Doc = Mapper(Clauses),
     concat(
         force_breaks(),
         group(line(concat(Left, nest(concat(line(), Doc), ?INDENT)), Right))
@@ -274,6 +293,8 @@ surround_block(Left, Doc, Right) ->
 
 string_to_algebra(Text) ->
     case string:split(Text, "\n", all) of
+        ["\"\"\"" ++ _ = Quote | Rest] ->
+            tripple_quoted_to_algebra(Quote, Rest);
         [Line] ->
             string(Line);
         [First, "\""] ->
@@ -283,6 +304,36 @@ string_to_algebra(Text) ->
             LinesD = string_lines_to_algebra(Lines),
             concat([force_breaks(), FirstD, line(), LinesD])
     end.
+
+%% tripple-quoted string might have actually more than tripple quotes
+%% indentation to remove from each line is given from the closing parenteses per documentation
+%% see: https://www.erlang.org/doc/system/data_types#string
+tripple_quoted_to_algebra(Quote, LinesWithFinalQuote) ->
+    {Lines, FinalQuote} = splitlast(LinesWithFinalQuote, []),
+    IndentToRemove = calculate_indentation(Quote, FinalQuote, []),
+    CleanedLinesD =
+        [Quote] ++ [format_tripple_line(Line, IndentToRemove) || Line <- Lines] ++ [Quote],
+    join_tripple_lines(CleanedLinesD, 1).
+
+splitlast([T], Acc) -> {lists:reverse(Acc), T};
+splitlast([H | T], Acc) -> splitlast(T, [H | Acc]).
+
+calculate_indentation(Quote, Quote, Acc) -> lists:reverse(Acc);
+calculate_indentation(Quote, [I | Rest], Acc) -> calculate_indentation(Quote, Rest, [I | Acc]).
+
+%% empty lines have no indentation
+format_tripple_line([], _Indent) -> [];
+format_tripple_line(Line, Indent) -> remove_indentation(Line, Indent).
+
+remove_indentation(Line, []) -> Line;
+remove_indentation([H | LineRest], [H | IndentRest]) -> remove_indentation(LineRest, IndentRest).
+
+join_tripple_lines([Line], 1) ->
+    string(Line);
+join_tripple_lines([Line, [] | Rest], EmptyLines) ->
+    join_tripple_lines([Line | Rest], EmptyLines + 1);
+join_tripple_lines([Line | Rest], EmptyLines) ->
+    concat(string(Line), line(EmptyLines), join_tripple_lines(Rest, 1)).
 
 string_lines_to_algebra([LastLine]) ->
     string(["\"" | LastLine]);
@@ -698,8 +749,7 @@ fun_to_algebra({clauses, _Anno, [Clause]}) ->
         _ -> group(break(space(<<"fun">>, ClauseD), <<"end">>))
     end;
 fun_to_algebra({clauses, _Anno, Clauses}) ->
-    ClausesD = clauses_to_algebra(Clauses),
-    surround_block(<<"fun">>, ClausesD, <<"end">>);
+    surround_block(<<"fun">>, Clauses, fun clauses_to_algebra/1, <<"end">>);
 fun_to_algebra(type) ->
     <<"fun()">>;
 fun_to_algebra({type, Meta, Args, Result}) ->

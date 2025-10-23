@@ -34,7 +34,9 @@
 
 -export_type([error_info/0, config_option/0, config/0, pragma/0]).
 
--type error_info() :: {file:name_all(), erl_anno:location(), module(), Reason :: any()}.
+-type error_info() :: {
+    file:name_all(), erl_anno:location() | erlfmt_scan:anno(), module(), Reason :: any()
+}.
 -type pragma() :: require | insert | delete | ignore.
 -type config_option() :: {pragma, pragma()} | {print_width, pos_integer()} | verbose.
 -type config() :: [config_option()].
@@ -414,11 +416,19 @@ read_file(FileName, Action) ->
     end.
 
 % Return file as one big string (with '\n' as line separator).
+-if(?OTP_RELEASE >= 27).
+read_file_or_stdin(stdin) ->
+    read_stdin([]);
+read_file_or_stdin(FileName) ->
+    {ok, Bin} = file:read_file(FileName, [raw]),
+    unicode:characters_to_list(Bin).
+-else.
 read_file_or_stdin(stdin) ->
     read_stdin([]);
 read_file_or_stdin(FileName) ->
     {ok, Bin} = file:read_file(FileName),
     unicode:characters_to_list(Bin).
+-endif.
 
 read_stdin(Acc) ->
     case io:get_line("") of
@@ -538,15 +548,11 @@ parse(Tokens) ->
     end.
 
 ignore_state_pre(PreComments, FileName, Acc) ->
-    case ignore_state(PreComments, FileName, Acc) of
-        'end' -> false;
-        Other -> Other
-    end.
+    ignore_state(PreComments, FileName, Acc).
 
 ignore_state_post(PostComments, FileName, Acc) ->
     case ignore_state(PostComments, FileName, Acc) of
         ignore -> false;
-        'end' -> false;
         Other -> Other
     end.
 
@@ -555,17 +561,36 @@ ignore_state([{comment, Loc, Comments} | Rest], FileName, Acc) ->
 ignore_state([], _FileName, Acc) ->
     Acc.
 
+-define(IS_IGNORE_REASON(S), (S =:= [] orelse hd(S) =:= 32 orelse hd(S) =:= $%)).
+
 ignore_state([Line | Lines], FileName, Loc, Rest, Acc0) ->
     Acc =
-        case string:trim(Line, both, "% ") of
-            "erlfmt-ignore" when Acc0 =:= false -> ignore;
-            "erlfmt-ignore" ->
+        case string:trim(Line, leading, "% ") of
+            % Old-style erlfmt-ignore
+            "erlfmt-ignore" ++ R when ?IS_IGNORE_REASON(R), Acc0 =:= false ->
+                ignore;
+            "erlfmt-ignore" ++ R when ?IS_IGNORE_REASON(R) ->
                 throw({error, {FileName, Loc, ?MODULE, {invalid_ignore, ignore, Acc0}}});
-            "erlfmt-ignore-begin" when Acc0 =:= false -> 'begin';
-            "erlfmt-ignore-begin" ->
+            "erlfmt-ignore-begin" ++ R when ?IS_IGNORE_REASON(R), Acc0 =:= false ->
+                'begin';
+            "erlfmt-ignore-begin" ++ R when ?IS_IGNORE_REASON(R) ->
                 throw({error, {FileName, Loc, ?MODULE, {invalid_ignore, 'begin', Acc0}}});
-            "erlfmt-ignore-end" when Acc0 =:= 'begin' -> 'end';
-            "erlfmt-ignore-end" ->
+            "erlfmt-ignore-end" ++ R when ?IS_IGNORE_REASON(R), Acc0 =:= 'begin' ->
+                false;
+            "erlfmt-ignore-end" ++ R when ?IS_IGNORE_REASON(R) ->
+                throw({error, {FileName, Loc, ?MODULE, {invalid_ignore, 'end', Acc0}}});
+            % New-style erlfmt:ignore
+            "erlfmt:ignore" ++ R when ?IS_IGNORE_REASON(R), Acc0 =:= false ->
+                ignore;
+            "erlfmt:ignore" ++ R when ?IS_IGNORE_REASON(R) ->
+                throw({error, {FileName, Loc, ?MODULE, {invalid_ignore, ignore, Acc0}}});
+            "erlfmt:ignore-begin" ++ R when ?IS_IGNORE_REASON(R), Acc0 =:= false ->
+                'begin';
+            "erlfmt:ignore-begin" ++ R when ?IS_IGNORE_REASON(R) ->
+                throw({error, {FileName, Loc, ?MODULE, {invalid_ignore, 'begin', Acc0}}});
+            "erlfmt:ignore-end" ++ R when ?IS_IGNORE_REASON(R), Acc0 =:= 'begin' ->
+                false;
+            "erlfmt:ignore-end" ++ R when ?IS_IGNORE_REASON(R) ->
                 throw({error, {FileName, Loc, ?MODULE, {invalid_ignore, 'end', Acc0}}});
             _ ->
                 Acc0
@@ -693,11 +718,11 @@ format_error(could_not_reparse) ->
 format_error({long_line, Length, Width}) ->
     io_lib:format("line too long (~p > ~p)", [Length, Width]);
 format_error({invalid_ignore, ignore, 'begin'}) ->
-    "invalid erlfmt-ignore while in erlfmt-ignore-begin section";
+    "invalid erlfmt:ignore while in erlfmt:ignore-begin section";
 format_error({invalid_ignore, Same, Same}) ->
     "duplicate ignore comment";
 format_error({invalid_ignore, 'end', false}) ->
-    "invalid erlfmt-ignore-end while outside of erlfmt-ignore-begin section";
+    "invalid erlfmt:ignore-end while outside of erlfmt:ignore-begin section";
 format_error({invalid_ignore, Given, Previous}) ->
     io_lib:format("invalid ignore specification ~ts while in ~ts state", [Given, Previous]).
 

@@ -68,12 +68,18 @@
     snapshot_script/1,
     snapshot_ignore_format/1,
     snapshot_ignore_format_many/1,
+    snapshot_ignore_format_old/1,
+    snapshot_ignore_format_many_old/1,
     snapshot_empty/1,
     format_string_unicode/1,
     error_ignore_begin_ignore/1,
     error_ignore_begin_ignore_begin/1,
     error_ignore_end/1,
     error_ignore_ignore/1,
+    error_ignore_ignore_old/1,
+    error_ignore_begin_ignore_old/1,
+    error_ignore_begin_ignore_begin_old/1,
+    error_ignore_end_old/1,
     simple_comments_range/1,
     broken_range/1,
     snapshot_range_whole_comments/1,
@@ -92,6 +98,9 @@
     snapshot_enclosing_range2/1,
     snapshot_enclosing_range_no_leak/1,
     snapshot_range_reinjected/1,
+    snapshot_tripple_string/1,
+    snapshot_tripple_crash/1,
+    snapshot_sigil_crash/1,
     contains_pragma/1,
     insert_pragma/1,
     overlong_warning/1,
@@ -109,6 +118,11 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
+init_per_group(otp_27_snapshot_tests, Config) ->
+    case erlang:system_info(otp_release) >= "27" of
+        true -> Config;
+        false -> {skip, "Skipping tests for features from OTP >= 27"}
+    end;
 init_per_group(_GroupName, Config) ->
     Config.
 
@@ -163,14 +177,26 @@ groups() ->
             snapshot_script,
             snapshot_ignore_format,
             snapshot_ignore_format_many,
+            snapshot_ignore_format_old,
+            snapshot_ignore_format_many_old,
             snapshot_empty,
-            format_string_unicode
+            format_string_unicode,
+            {group, otp_27_snapshot_tests}
+        ]},
+        {otp_27_snapshot_tests, [parallel], [
+            snapshot_tripple_string,
+            snapshot_tripple_crash,
+            snapshot_sigil_crash
         ]},
         {error_tests, [parallel], [
             error_ignore_begin_ignore,
             error_ignore_begin_ignore_begin,
             error_ignore_end,
-            error_ignore_ignore
+            error_ignore_ignore,
+            error_ignore_begin_ignore_old,
+            error_ignore_begin_ignore_begin_old,
+            error_ignore_end_old,
+            error_ignore_ignore_old
         ]},
         {range_tests, [parallel], [
             simple_comments_range,
@@ -986,7 +1012,7 @@ dotted(Config) when is_list(Config) ->
 map_comprehension(Config) when is_list(Config) ->
     ?assertMatch(
         {mc, _, {map_field_assoc, _, {var, _, 'A'}, {var, _, 'B'}}, [
-            {generate, _, {map_field_exact, _, {var, _, 'A'}, {var, _, 'B'}}, {var, _, 'M'}}
+            {generate, _, '<-', {map_field_exact, _, {var, _, 'A'}, {var, _, 'B'}}, {var, _, 'M'}}
         ]},
         parse_expr("#{A => B || A := B <- M}")
     ).
@@ -1078,10 +1104,20 @@ snapshot_ignore_format(Config) -> snapshot_formatted("ignore_format.erl", Config
 
 snapshot_ignore_format_many(Config) -> snapshot_formatted("ignore_format_many.erl", Config).
 
+snapshot_ignore_format_old(Config) -> snapshot_formatted("ignore_format_old.erl", Config).
+
+snapshot_ignore_format_many_old(Config) -> snapshot_formatted("ignore_format_many_old.erl", Config).
+
 snapshot_empty(Config) -> snapshot_same("empty.erl", Config).
 
 snapshot_insert_pragma_with(Config) when is_list(Config) ->
     snapshot_same("pragma.erl", [{pragma, insert} | Config]).
+
+snapshot_tripple_string(Config) -> snapshot_formatted("tripple_string.erl", Config).
+
+snapshot_tripple_crash(Config) -> snapshot_same("tripple_crash.erl", Config).
+
+snapshot_sigil_crash(Config) -> snapshot_same("sigil_crash.erl", Config).
 
 snapshot_same(Module, Config) ->
     Pragma = proplists:get_value(pragma, Config, ignore),
@@ -1114,13 +1150,29 @@ format_string_unicode(_) ->
 
 error_ignore_begin_ignore(_) ->
     assert_error(
+        "% erlfmt:ignore-begin\n"
+        "% erlfmt:ignore\n"
+        "foo() -> ok.\n",
+        "nofile:1:1: invalid erlfmt:ignore while in erlfmt:ignore-begin section"
+    ).
+
+error_ignore_begin_ignore_old(_) ->
+    assert_error(
         "% erlfmt-ignore-begin\n"
         "% erlfmt-ignore\n"
         "foo() -> ok.\n",
-        "nofile:1:1: invalid erlfmt-ignore while in erlfmt-ignore-begin section"
+        "nofile:1:1: invalid erlfmt:ignore while in erlfmt:ignore-begin section"
     ).
 
 error_ignore_begin_ignore_begin(_) ->
+    assert_error(
+        "% erlfmt:ignore-begin\n"
+        "% erlfmt:ignore-begin\n"
+        "foo() -> ok.\n",
+        "nofile:1:1: duplicate ignore comment"
+    ).
+
+error_ignore_begin_ignore_begin_old(_) ->
     assert_error(
         "% erlfmt-ignore-begin\n"
         "% erlfmt-ignore-begin\n"
@@ -1130,12 +1182,27 @@ error_ignore_begin_ignore_begin(_) ->
 
 error_ignore_end(_) ->
     assert_error(
+        "% erlfmt:ignore-end\n"
+        "foo() -> ok.\n",
+        "nofile:1:1: invalid erlfmt:ignore-end while outside of erlfmt:ignore-begin section"
+    ).
+
+error_ignore_end_old(_) ->
+    assert_error(
         "% erlfmt-ignore-end\n"
         "foo() -> ok.\n",
-        "nofile:1:1: invalid erlfmt-ignore-end while outside of erlfmt-ignore-begin section"
+        "nofile:1:1: invalid erlfmt:ignore-end while outside of erlfmt:ignore-begin section"
     ).
 
 error_ignore_ignore(_) ->
+    assert_error(
+        "% erlfmt:ignore\n"
+        "% erlfmt:ignore\n"
+        "foo() -> ok.\n",
+        "nofile:1:1: duplicate ignore comment"
+    ).
+
+error_ignore_ignore_old(_) ->
     assert_error(
         "% erlfmt-ignore\n"
         "% erlfmt-ignore\n"

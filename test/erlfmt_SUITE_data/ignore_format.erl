@@ -1,6 +1,6 @@
 -module(ignore_format).
 
-%%% erlfmt-ignore
+%%% erlfmt:ignore
 -define(DELTA_MATRIX, [
     [0,   0,   0,   0,   0,   0],
     [0, -16,   0,   0,   0,   0],
@@ -20,7 +20,7 @@
 ]).
 
 %% some comment
-%%erlfmt-ignore %
+%%erlfmt:ignore %
 %% another comment
 gen_part_decode_funcs({constructed,bif},TypeName,
               {_Name,parts,Tag,_Type}) ->
@@ -32,6 +32,9 @@ gen_part_decode_funcs({constructed,bif},TypeName,
           "      [Res] = 'dec_",TypeName,"'([Data],",{asis,Tag},"),",nl,
           "      Res",nl,
           "  end"]).
+
+% erlfmt:ignore I like the comment next to the statement
+f() -> ok. % this is ok
 
 %% TODO write emit
 emit(S) ->   ok.

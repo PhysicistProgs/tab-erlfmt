@@ -70,7 +70,15 @@
     force_break/1,
     binary_operator_more/1,
     binary_operator_equal/1,
-    update_edgecase/1
+    update_edgecase/1,
+    sigils/1,
+    doc_attributes/1,
+    doc_macros/1,
+    incomplete/1,
+    maybe_incomplete/1,
+    strict_generators/1,
+    zip_generators/1,
+    nominal_type/1
 ]).
 
 suite() ->
@@ -83,13 +91,23 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
+init_per_group(otp_27_features, Config) ->
+    case erlang:system_info(otp_release) >= "27" of
+        true -> Config;
+        false -> {skip, "Skipping tests for features from OTP >= 27"}
+    end;
+init_per_group(otp_28_features, Config) ->
+    case erlang:system_info(otp_release) >= "28" of
+        true -> Config;
+        false -> {skip, "Skipping tests for features from OTP >= 28"}
+    end;
 init_per_group(_GroupName, Config) ->
     Config.
 
 end_per_group(_GroupName, _Config) ->
     ok.
 
-init_per_testcase(maybe_expression, Config) ->
+init_per_testcase(Maybe, Config) when Maybe =:= maybe_expression; Maybe =:= maybe_incomplete ->
     case has_feature(maybe_expr, Config) of
         true -> Config;
         false -> {skip, "Maybe feature not present in the runtime system"}
@@ -114,10 +132,13 @@ groups() ->
             fun_expression,
             case_expression,
             maybe_expression,
+            maybe_incomplete,
             receive_expression,
             try_expression,
             if_expression,
-            macro
+            macro,
+            doc_macros,
+            incomplete
         ]},
         {forms, [parallel], [
             function,
@@ -157,6 +178,15 @@ groups() ->
             list_comprehension,
             map_comprehension,
             binary_comprehension
+        ]},
+        {otp_27_features, [parallel], [
+            sigils,
+            doc_attributes
+        ]},
+        {otp_28_features, [parallel], [
+            strict_generators,
+            zip_generators,
+            nominal_type
         ]}
     ].
 
@@ -164,6 +194,8 @@ all() ->
     [
         {group, expressions},
         {group, forms},
+        {group, otp_27_features},
+        {group, otp_28_features},
         comment
     ].
 
@@ -231,6 +263,39 @@ literals(Config) when is_list(Config) ->
     ?assertSame("Foo\n"),
     ?assertSame("_Bar\n"),
     ?assertFormat("$ ", "$\\s\n").
+
+sigils(Config) when is_list(Config) ->
+    %% https://www.erlang.org/blog/highlights-otp-27/#sigils
+    ?assertSame("~b\"abc\\txyz\"\n"),
+    ?assertSame("~\"abc\\txyz\"\n"),
+    ?assertSame("~s{\"abc\\txyz\"}\n"),
+    %% The modifier X does not technically exist, but there seems to be no supported
+    %% modifiers yet even though they are correctly parsed.
+    ?assertSame("~b\"abc\\txyz\"x\n"),
+    %% https://www.erlang.org/blog/highlights-otp-27/#triple-quoted-strings
+    ?assertFormat(
+        "\t\"\"\"\n"
+        "\t\tTest\n"
+        "\t\t  Test\n"
+        "\t\"\"\"\n",
+        "\"\"\"\n"
+        "\tTest\n"
+        "\t  Test\n"
+        "\"\"\"\n"
+    ),
+    ?assertFormat(
+        "    \"\"\"\n"
+        "    Test\n"
+        "      Test\n"
+        "    \"\"\"\n",
+        "\"\"\"\n"
+        "Test\n"
+        "  Test\n"
+        "\"\"\"\n"
+    ),
+    ?assertSame("~s\"\"\"\n\\tabc\n\\tdef\n\"\"\"\n"),
+    ?assertSame("\"\"\"\nTest\nMultiline\n\"\"\"\n"),
+    ?assertSame("~\"\"\"\nTest\nMultiline\n\"\"\"\n").
 
 dotted(Config) when is_list(Config) ->
     ?assertSame("<0.1.2>\n"),
@@ -1176,7 +1241,8 @@ tuple(Config) when is_list(Config) ->
         "            line(expr_to_algebra(Value), comments_to_algebra(Comments))\n"
         "        )\n"
         "    ])}\n"
-    ).
+    ),
+    ?assertFormat("{1,}\n", "{1}\n").
 
 %% tagged vs untagged tuples
 untagged_tuple(Config) when is_list(Config) ->
@@ -1651,7 +1717,8 @@ list(Config) when is_list(Config) ->
         "    % comment below\n"
         "    | Rest\n"
         "].\n"
-    ).
+    ),
+    ?assertFormat("[1,]\n", "[1]\n").
 
 binary(Config) when is_list(Config) ->
     ?assertFormat("<< >>", "<<>>\n"),
@@ -1683,7 +1750,8 @@ binary(Config) when is_list(Config) ->
         "        333\n"
         "    >>\n"
         ">>\n"
-    ).
+    ),
+    ?assertFormat("<<1,>>\n", "<<1>>\n").
 
 map_create(Config) when is_list(Config) ->
     ?assertFormat("#{\n}", "#{}\n"),
@@ -1718,22 +1786,6 @@ map_create(Config) when is_list(Config) ->
         "#{\n"
         "    ?FOO\n"
         "}\n"
-    ).
-
-map_update(Config) when is_list(Config) ->
-    ?assertFormat("X # {\n}", "X#{}\n"),
-    ?assertSame("#{}#{}\n"),
-    ?assertSame("#{}#{}#{}\n"),
-    ?assertSame("(X#foo.bar)#{}\n"),
-    ?assertSame("(catch 1)#{}\n"),
-    ?assertSame("X#{A => B, C := D}\n"),
-    ?assertFormat(
-        "X#{11 => 22, 33 => 44}",
-        "X#{\n"
-        "    11 => 22,\n"
-        "    33 => 44\n"
-        "}\n",
-        15
     ),
     ?assertFormat(
         "#{55 => 66, 77 => 88}#{11 => 22, 33 => 44}",
@@ -1755,7 +1807,25 @@ map_update(Config) when is_list(Config) ->
         "        e\n"
         "    )\n"
         "}\n"
-    ).
+    ),
+    ?assertFormat("#{a => 1,}\n", "#{a => 1}\n").
+
+map_update(Config) when is_list(Config) ->
+    ?assertFormat("X # {\n}", "X#{}\n"),
+    ?assertSame("#{}#{}\n"),
+    ?assertSame("#{}#{}#{}\n"),
+    ?assertSame("(X#foo.bar)#{}\n"),
+    ?assertSame("(catch 1)#{}\n"),
+    ?assertSame("X#{A => B, C := D}\n"),
+    ?assertFormat(
+        "X#{11 => 22, 33 => 44}",
+        "X#{\n"
+        "    11 => 22,\n"
+        "    33 => 44\n"
+        "}\n",
+        15
+    ),
+    ?assertFormat("X#{a => 1,}\n", "X#{a => 1}\n").
 
 record_create(Config) when is_list(Config) ->
     ?assertFormat("#foo{\n}", "#foo{}\n"),
@@ -1815,7 +1885,8 @@ record_create(Config) when is_list(Config) ->
         "    c = 3\n"
         "}\n",
         15
-    ).
+    ),
+    ?assertFormat("#foo{a = 1,}\n", "#foo{a = 1}\n").
 
 record_update(Config) when is_list(Config) ->
     ?assertFormat("X #foo {\n}", "X#foo{}\n"),
@@ -1843,7 +1914,8 @@ record_update(Config) when is_list(Config) ->
         15
     ),
     ?assertSame("X#?FOO{}\n"),
-    ?assertSame("X?FOO{}\n").
+    ?assertSame("X?FOO{}\n"),
+    ?assertFormat("X#foo{a = 1,}\n", "X#foo{a = 1}\n").
 
 record_index(Config) when is_list(Config) ->
     ?assertSame("#foo.bar\n"),
@@ -2098,7 +2170,8 @@ list_comprehension(Config) when is_list(Config) ->
         "    Value\n"
         " || {string, _, Value} <- ValuesR\n"
         "]).\n"
-    ).
+    ),
+    ?assertFormat("[A || A <- List,]\n", "[A || A <- List]\n").
 
 map_comprehension(Config) when is_list(Config) ->
     ?assertFormat("#{X=>X||X<-List}", "#{X => X || X <- List}\n"),
@@ -2166,7 +2239,8 @@ map_comprehension(Config) when is_list(Config) ->
         "    X < 10\n"
         "}\n",
         25
-    ).
+    ),
+    ?assertFormat("#{A => A || A := B <- Map,}\n", "#{A => A || A := B <- Map}\n").
 
 binary_comprehension(Config) when is_list(Config) ->
     ?assertFormat("<<X||X<-List>>", "<<X || X <- List>>\n"),
@@ -2212,7 +2286,8 @@ binary_comprehension(Config) when is_list(Config) ->
         "    <<ALong, B>>\n"
         " || ALong = {_, _, _, {B, _}} <- All, lists:member(B, Keep)\n"
         ">>)\n"
-    ).
+    ),
+    ?assertFormat("<<A || <<A>> <= Bin,>>\n", "<<A || <<A>> <= Bin>>\n").
 
 call(Config) when is_list(Config) ->
     ?assertFormat("foo(\n)", "foo()\n"),
@@ -2317,7 +2392,8 @@ call(Config) when is_list(Config) ->
         "    Long,\n"
         "    Arguments\n"
         ")\n"
-    ).
+    ),
+    ?assertFormat("foo(1,)\n", "foo(1)\n").
 
 block(Config) when is_list(Config) ->
     ?assertFormat(
@@ -2519,7 +2595,8 @@ fun_expression(Config) when is_list(Config) ->
         "->\n"
         "    X\n"
         "end\n"
-    ).
+    ),
+    ?assertFormat("fun() -> ok;end.\n", "fun() -> ok end.\n").
 
 case_expression(Config) when is_list(Config) ->
     ?assertFormat(
@@ -2720,6 +2797,14 @@ case_expression(Config) when is_list(Config) ->
         "    ?macro(1);\n"
         "    ?macro(2)\n"
         "end\n"
+    ),
+    ?assertFormat(
+        "case 1 of\n"
+        "    1 -> ok;\n"
+        "end\n",
+        "case 1 of\n"
+        "    1 -> ok\n"
+        "end\n"
     ).
 
 maybe_expression(Config) when is_list(Config) ->
@@ -2763,6 +2848,26 @@ maybe_expression(Config) when is_list(Config) ->
         "    % comment else before\n"
         "    1 -> ok\n"
         "    % comment else after\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "maybe\n"
+        "    1 ?= 1,\n"
+        "end\n",
+        "maybe\n"
+        "    1 ?= 1\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "maybe\n"
+        "    ok\n"
+        "else\n"
+        "    4 -> ok;\n"
+        "end\n",
+        "maybe\n"
+        "    ok\n"
+        "else\n"
+        "    4 -> ok\n"
         "end\n"
     ).
 
@@ -3002,6 +3107,14 @@ receive_expression(Config) when is_list(Config) ->
         "        )\n"
         "        %% after after for receive\n"
         "end\n"
+    ),
+    ?assertFormat(
+        "receive\n"
+        "    1 -> ok;\n"
+        "end\n",
+        "receive\n"
+        "    1 -> ok\n"
+        "end\n"
     ).
 
 try_expression(Config) when is_list(Config) ->
@@ -3135,6 +3248,54 @@ try_expression(Config) when is_list(Config) ->
         "    ok\n"
         "    %% after after\n"
         "end\n"
+    ),
+    ?assertFormat(
+        "try\n"
+        "    ok,\n"
+        "after\n"
+        "    Expr\n"
+        "end\n",
+        "try\n"
+        "    ok\n"
+        "after\n"
+        "    Expr\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "try\n"
+        "    ok\n"
+        "after\n"
+        "    Expr,\n"
+        "end\n",
+        "try\n"
+        "    ok\n"
+        "after\n"
+        "    Expr\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "try Expr of\n"
+        "    _ -> ok;\n"
+        "after\n"
+        "    Expr\n"
+        "end\n",
+        "try Expr of\n"
+        "    _ -> ok\n"
+        "after\n"
+        "    Expr\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "try\n"
+        "    ok\n"
+        "catch\n"
+        "    _ -> throw;\n"
+        "end\n",
+        "try\n"
+        "    ok\n"
+        "catch\n"
+        "    _ -> throw\n"
+        "end\n"
     ).
 
 if_expression(Config) when is_list(Config) ->
@@ -3178,6 +3339,30 @@ if_expression(Config) when is_list(Config) ->
         "        Expression\n"
         "end\n",
         25
+    ),
+    ?assertFormat(
+        "if\n"
+        "    true -> ok;\n"
+        "end\n",
+        "if\n"
+        "    true -> ok\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "if\n"
+        "    true, -> ok\n"
+        "end\n",
+        "if\n"
+        "    true -> ok\n"
+        "end\n"
+    ),
+    ?assertFormat(
+        "if\n"
+        "    true; -> ok\n"
+        "end\n",
+        "if\n"
+        "    true -> ok\n"
+        "end\n"
     ).
 
 macro(Config) when is_list(Config) ->
@@ -3203,7 +3388,9 @@ macro(Config) when is_list(Config) ->
         ")\n",
         23
     ),
-    ?assertSame("?macro(Expr when Guard1; Guard2)\n").
+    ?assertSame("?macro(Expr when Guard1; Guard2)\n"),
+    ?assertFormat("?foo(X,)\n", "?foo(X)\n"),
+    ?assertSame("?macro(Expr, t1() | t2())\n").
 
 function(Config) when is_list(Config) ->
     ?assertSame("f() -> ok.\n"),
@@ -3247,7 +3434,10 @@ function(Config) when is_list(Config) ->
         "bar(X) -> ok. % comment\n",
         "% comment\n"
         "bar(X) -> ok.\n"
-    ).
+    ),
+    ?assertFormat("foo(1,) -> ok.\n", "foo(1) -> ok.\n"),
+    ?assertFormat("foo() -> ok,.\n", "foo() -> ok.\n"),
+    ?assertFormat("foo() -> ok;.\n", "foo() -> ok.\n").
 
 attribute(Config) when is_list(Config) ->
     ?assertFormat("-else .", "-else.\n"),
@@ -3306,7 +3496,8 @@ attribute(Config) when is_list(Config) ->
         "-type str() :: string().\n"
         "\n"
         "-type int() :: integer().\n"
-    ).
+    ),
+    ?assertFormat("-attr(1,2,).\n", "-attr(1, 2).\n").
 
 exportimport(Config) when is_list(Config) ->
     ?assertSame("-export([bar/2, baz/3]).\n"),
@@ -3873,7 +4064,9 @@ spec(Config) when is_list(Config) ->
         "    Long,\n"
         "    Arguments\n"
         ") -> ok.\n"
-    ).
+    ),
+    ?assertFormat("-spec foo(1,) -> ok.\n", "-spec foo(1) -> ok.\n"),
+    ?assertFormat("-spec foo() -> ok;.\n", "-spec foo() -> ok.\n").
 
 define(Config) when is_list(Config) ->
     ?assertSame(
@@ -3918,7 +4111,8 @@ define(Config) when is_list(Config) ->
         ").\n"
     ),
     ?assertSame("-define(ANY_MODE(Mode), Mode when Mode =:= inline; Mode =:= async).\n"),
-    ?assertSame("-define(CATCH, C:E:S).\n").
+    ?assertSame("-define(CATCH, C:E:S).\n"),
+    ?assertFormat("-define(FOO(A,), A).\n", "-define(FOO(A), A).\n").
 
 type(Config) when is_list(Config) ->
     ?assertSame(
@@ -4078,7 +4272,8 @@ type(Config) when is_list(Config) ->
     ),
     ?assertSame(
         "-type foo() :: ?FOO:?BAR().\n"
-    ).
+    ),
+    ?assertFormat("-type foo() :: bar(1,).\n", "-type foo() :: bar(1).\n").
 
 exprs(Config) when is_list(Config) ->
     ?assertSame(
@@ -4233,4 +4428,79 @@ comment(Config) when is_list(Config) ->
         "% c\n"
         "\"a,\\n\"\n"
         "\"b\".\n"
+    ).
+
+doc_attributes(Config) when is_list(Config) ->
+    ?assertSame("-moduledoc \"Test\".\n-moduledoc #{since => <<\"1.0.0\">>}.\n"),
+    ?assertSame("-moduledoc \"\"\"\nTest\nMultiline\n\"\"\".\n"),
+    ?assertSame("-doc \"Test\".\n-doc #{since => <<\"1.0.0\">>}.\ntest() -> ok.\n"),
+    ?assertSame("-doc \"Test\".\n-doc #{since => <<\"1.0.0\">>}.\n-type t() :: ok.\n").
+
+doc_macros(Config) when is_list(Config) ->
+    %% Doc Attributes as macros is a common pattern for OTP < 27 compatibility.
+    ?assertSame("?MODULEDOC(\"Test\").\n?MODULEDOC(#{since => <<\"1.0.0\">>}).\n"),
+    ?assertSame("?DOC(\"Test\").\n?DOC(#{since => <<\"1.0.0\">>}).\ntest() -> ok.\n"),
+    ?assertSame("?DOC(\"Test\").\n?DOC(#{since => <<\"1.0.0\">>}).\n-type t() :: ok.\n").
+
+incomplete(Config) when is_list(Config) ->
+    ?assertSame(
+        "case X of\n"
+        "end.\n"
+    ),
+    ?assertSame(
+        "receive\n"
+        "end.\n"
+    ),
+    ?assertSame(
+        "if\n"
+        "end.\n"
+    ),
+    ?assertSame(
+        "fun\n"
+        "end.\n"
+    ),
+    ?assertSame(
+        "begin\n"
+        "end.\n"
+    ).
+
+maybe_incomplete(Config) when is_list(Config) ->
+    ?assertSame(
+        "maybe\n"
+        "end.\n"
+    ),
+    ?assertSame(
+        "maybe\n"
+        "else\n"
+        "    ok -> ok\n"
+        "end.\n"
+    ).
+
+strict_generators(Config) when is_list(Config) ->
+    ?assertSame("[X || X <:- Xs]\n"),
+    ?assertSame("[{K, V} || K := V <:- M]\n"),
+    ?assertSame("[X || <<X>> <:= Xs]\n").
+
+zip_generators(Config) when is_list(Config) ->
+    ?assertSame("[{X, Y} || X <- Xs && Y <- Ys]\n"),
+    ?assertFormat(
+        "[{X, Y} || X <- Xs && Y <- Ys, X < Y]\n",
+        "[\n"
+        "    {X, Y}\n"
+        " || X <- Xs &&\n"
+        "        Y <- Ys,\n"
+        "    X < Y\n"
+        "]\n",
+        16
+    ).
+
+nominal_type(Config) when is_list(Config) ->
+    ?assertSame(
+        "-nominal foo() :: #foo{a :: integer(), b :: module:type()}.\n"
+    ),
+    ?assertSame(
+        "-nominal foo() :: {<<>>, <<_:8>>, <<_:_*4>>, <<_:8, _:_*4>>}.\n"
+    ),
+    ?assertSame(
+        "-nominal foo() :: {fun(), fun((...) -> mod:bar()), fun(() -> integer())}.\n"
     ).

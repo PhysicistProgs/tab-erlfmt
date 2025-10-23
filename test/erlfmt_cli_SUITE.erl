@@ -51,8 +51,10 @@
     noformat_pragma/1,
     noformat_pragma_file/1,
     exclude_check/1,
+    exclude_absolute_check/1,
     range_check_full/1,
-    range_check_partial/1
+    range_check_partial/1,
+    out_full_test/1
 ]).
 
 suite() ->
@@ -98,8 +100,10 @@ groups() ->
             noformat_pragma,
             noformat_pragma_file,
             exclude_check,
+            exclude_absolute_check,
             range_check_full,
-            range_check_partial
+            range_check_partial,
+            out_full_test
         ]}
     ].
 
@@ -250,16 +254,14 @@ noformat_pragma(Config) when is_list(Config) ->
 exclude_check(Config) when is_list(Config) ->
     Files = filename:join(?config(data_dir, Config), "*.erl"),
     Exclude = filename:join(?config(data_dir, Config), "broken.erl"),
-    WithBroken = os:cmd(
-        escript() ++ " -c " ++ Files
-    ),
-    ?assertNotMatch(nomatch, string:find(WithBroken, "[warn]")),
-    ?assertNotMatch(nomatch, string:find(WithBroken, "broken.erl")),
-    WithoutBroken = os:cmd(
-        escript() ++ " -c " ++ Files ++ " --exclude-files=" ++ Exclude
-    ),
-    ?assertNotMatch(nomatch, string:find(WithoutBroken, "[warn]")),
-    ?assertMatch(nomatch, string:find(WithoutBroken, "broken.erl")).
+    exclude_test(Files, Exclude).
+
+exclude_absolute_check(Config) when is_list(Config) ->
+    {ok, ProjectRoot} = file:get_cwd(),
+    DataDirRelPath = make_relative_path(?config(data_dir, Config), ProjectRoot),
+    Files = filename:join(?config(data_dir, Config), "*.erl"),
+    Exclude = filename:join(DataDirRelPath, "broken.erl"),
+    exclude_test(Files, Exclude).
 
 range_check_full(Config) when is_list(Config) ->
     %% Mainly check the options is properly recognized.
@@ -273,6 +275,26 @@ range_check_partial(Config) when is_list(Config) ->
     %% we reuse stdio_test which compare against original file.
     stdio_test("attributes.erl", "--range=1,2", Config).
 
+out_full_test(Config) when is_list(Config) ->
+    DataDir = ?config(data_dir, Config),
+    OutDir = ?config(priv_dir, Config),
+    CmdBase = "cd " ++ DataDir ++ " && " ++ escript(),
+
+    %% Test --out-full option preserves full path
+    Unformatted = "subdir/unformatted.erl",
+    CmdUnformatted = CmdBase ++ " -O " ++ OutDir ++ " " ++ Unformatted,
+    OutputUnformatted = os:cmd(CmdUnformatted),
+    ?assertEqual("", OutputUnformatted),
+    ExpectedUnformatted = filename:join(OutDir, Unformatted),
+    ?assertEqual({ok, <<"-module(unformatted).\n">>}, file:read_file(ExpectedUnformatted)),
+
+    Formatted = "subdir/formatted.erl",
+    CmdFormatted = CmdBase ++ " -O " ++ OutDir ++ " " ++ Formatted,
+    OutputFormatted = os:cmd(CmdFormatted),
+    ?assertEqual("", OutputFormatted),
+    ExpectedFormatted = filename:join(OutDir, Formatted),
+    ?assertEqual({error, enoent}, file:read_file(ExpectedFormatted)).
+
 %%--------------------------------------------------------------------
 %% HELPERS
 
@@ -284,6 +306,27 @@ stdio_test(FileName, Options, Config) ->
     {ok, Expected} = file:read_file(Path),
     assert_diagnostic:assert_binary_match(Expected, unicode:characters_to_binary(Formatted)).
 
+exclude_test(Files, Exclude) ->
+    WithBroken = os:cmd(
+        escript() ++ " -c " ++ Files
+    ),
+    ?assertNotMatch(nomatch, string:find(WithBroken, "[warn]")),
+    ?assertNotMatch(nomatch, string:find(WithBroken, "broken.erl")),
+    WithoutBroken = os:cmd(
+        escript() ++ " -c " ++ Files ++ " --exclude-files=" ++ Exclude
+    ),
+    ?assertNotMatch(nomatch, string:find(WithoutBroken, "[warn]")),
+    ?assertMatch(nomatch, string:find(WithoutBroken, "broken.erl")).
+
 escript() ->
     %% this relies on the _build structure rebar3 uses
     filename:join(code:lib_dir(erlfmt), "../../bin/erlfmt").
+
+make_relative_path(Source, Target) ->
+    make_relative_path2(filename:split(Source), filename:split(Target)).
+
+make_relative_path2([H | T1], [H | T2]) ->
+    make_relative_path2(T1, T2);
+make_relative_path2(Source, Target) ->
+    Base = lists:duplicate(length(Target), ".."),
+    filename:join(Base ++ Source).

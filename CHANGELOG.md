@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.7.0 (13.06.2025)
+
+### Enhancements
+
+  - Support for zip and strict generators in comprehensions from OTP 28
+  - Support for nominal types from OTP 28
+  - Support some partially invalid code - e.g. case or receive with no clauses
+
+### Fixes
+
+  - Fix crash with sigils inside ignored sections
+  - Improve `erlfmt:error_info()` type
+
+## v1.6.2 (25.04.2025)
+
+### Fixes
+
+  - Fix crash when two erlfmt-ignore-begin/end blocks immediately followed
+
+## v1.6.1 (04.04.2025)
+
+### Fixes
+
+  - Fix crash when formatting an indented tripple quoted string with empty lines
+
+## v1.6.0 (29.01.2025)
+
+### Enhancements
+
+  - Parse code with trailing commas and semicolons and just remove them when reprinting
+
+## v1.5.0 (03.09.2024)
+
+### Enhancements
+
+  - Support OTP 27 sigils https://www.erlang.org/blog/highlights-otp-27/#sigils
+  - Support OTP 27 triple-quoted strings https://www.erlang.org/blog/highlights-otp-27/#triple-quoted-strings
+  - Support new documentation attributes
+
+### Fixes
+
+  - Apply `exclude_files` to `files` absolute paths - mixing relative & absolute paths could lead to
+    unexpected behaviour before
+
+## v1.4.0 (28.08.2024)
+
+### Enhancements
+
+  - Support trailing content on ignore comments
+  - Support (and recommend) `erlfmt:ignore`-style ignore comments to align with ELP & eqWAlizer
+
+### Fixes
+
+  - Fix compiler warnings on OTP 27
+
 ## v1.3.0 (08.11.2023)
 
 ### Enhancements
